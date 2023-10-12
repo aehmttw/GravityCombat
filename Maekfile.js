@@ -187,7 +187,7 @@ const show_meshes_exe = maek.LINK([...show_meshes_names, ...common_names], 'scen
 const show_scene_exe = maek.LINK([...show_scene_names, ...common_names], 'scenes/show-scene');
 
 //set the default target to the game (and copy the readme files):
-maek.TARGETS = [client_exe, server_exe, show_meshes_exe, show_scene_exe, maze_client_exe, ...copies];
+maek.TARGETS = [client_exe, server_exe, show_meshes_exe, show_scene_exe, ...copies];
 
 //Note that tasks that produce ':abstract targets' are never cached.
 // This is similar to how .PHONY targets behave in make.
