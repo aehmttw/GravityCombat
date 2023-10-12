@@ -142,6 +142,10 @@ const server_names = [
 	maek.CPP('server.cpp')
 ];
 
+const maze_client_names = [
+	maek.CPP('maze-client.cpp')
+];
+
 const common_names = [
 	maek.CPP('Game.cpp'),
 	maek.CPP('data_path.cpp'),
@@ -178,11 +182,12 @@ const show_scene_names = [
 //returns exeFile: exeFileBase + a platform-dependant suffix (e.g., '.exe' on windows)
 const client_exe = maek.LINK([...client_names, ...common_names], 'dist/client');
 const server_exe = maek.LINK([...server_names, ...common_names], 'dist/server');
+const maze_client_exe = maek.LINK([...maze_client_names, ...common_names], 'dist/maze_client');
 const show_meshes_exe = maek.LINK([...show_meshes_names, ...common_names], 'scenes/show-meshes');
 const show_scene_exe = maek.LINK([...show_scene_names, ...common_names], 'scenes/show-scene');
 
 //set the default target to the game (and copy the readme files):
-maek.TARGETS = [client_exe, server_exe, show_meshes_exe, show_scene_exe, ...copies];
+maek.TARGETS = [client_exe, server_exe, show_meshes_exe, show_scene_exe, maze_client_exe, ...copies];
 
 //Note that tasks that produce ':abstract targets' are never cached.
 // This is similar to how .PHONY targets behave in make.

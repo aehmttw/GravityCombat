@@ -12,7 +12,7 @@ void Player::Controls::send_controls_message(Connection *connection_) const {
 	assert(connection_);
 	auto &connection = *connection_;
 
-	uint32_t size = 5;
+	uint32_t size = 7;
 	connection.send(Message::C2S_Controls);
 	connection.send(uint8_t(size));
 	connection.send(uint8_t(size >> 8));
@@ -29,7 +29,9 @@ void Player::Controls::send_controls_message(Connection *connection_) const {
 	send_button(right);
 	send_button(up);
 	send_button(down);
-	send_button(jump);
+	send_button(fire);
+    send_button(gravity_cw);
+    send_button(gravity_ccw);
 }
 
 bool Player::Controls::recv_controls_message(Connection *connection_) {
@@ -44,7 +46,7 @@ bool Player::Controls::recv_controls_message(Connection *connection_) {
 	uint32_t size = (uint32_t(recv_buffer[3]) << 16)
 	              | (uint32_t(recv_buffer[2]) << 8)
 	              |  uint32_t(recv_buffer[1]);
-	if (size != 5) throw std::runtime_error("Controls message with size " + std::to_string(size) + " != 5!");
+	if (size != 7) throw std::runtime_error("Controls message with size " + std::to_string(size) + " != 5!");
 	
 	//expecting complete message:
 	if (recv_buffer.size() < 4 + size) return false;
@@ -63,7 +65,9 @@ bool Player::Controls::recv_controls_message(Connection *connection_) {
 	recv_button(recv_buffer[4+1], &right);
 	recv_button(recv_buffer[4+2], &up);
 	recv_button(recv_buffer[4+3], &down);
-	recv_button(recv_buffer[4+4], &jump);
+	recv_button(recv_buffer[4+4], &fire);
+    recv_button(recv_buffer[4+5], &gravity_ccw);
+    recv_button(recv_buffer[4+6], &gravity_cw);
 
 	//delete message from buffer:
 	recv_buffer.erase(recv_buffer.begin(), recv_buffer.begin() + 4 + size);
@@ -109,14 +113,113 @@ void Game::remove_player(Player *player) {
 	assert(found);
 }
 
+Bullet *Game::spawn_bullet(Player &p) {
+    bullets.emplace_back();
+    Bullet &bullet = bullets.back();
+
+    //random point in the middle area of the arena:
+    bullet.position = p.position;
+    bullet.velocity = glm::vec2(cos(p.angle), sin(p.angle)) * 0.4f;
+    bullet.position += bullet.velocity / 3.0f;
+    bullet.color = p.color;
+    bullet.player = &p;
+
+    p.cooldown = 0.2f;
+    p.bullets_left -= 1;
+
+    return &bullet;
+}
+
+void Game::remove_bullet(Bullet *bullet) {
+    for (auto bi = bullets.begin(); bi != bullets.end(); ++bi) {
+        if (&*bi == bullet) {
+            bullet->player->bullets_left++;
+            bullets.erase(bi);
+            break;
+        }
+    }
+}
+
 void Game::update(float elapsed) {
-	//position/velocity update:
+    //position/velocity update:
+    std::vector<Bullet*> remove_bullets;
+    for (auto &b : bullets) {
+        b.position += b.velocity * elapsed;
+
+        if (b.position.x < BulletArenaMin.x + BulletRadius) {
+            b.position.x = BulletArenaMin.x + BulletRadius;
+            b.velocity.x = std::abs(b.velocity.x);
+            b.bounces--;
+        }
+        if (b.position.x > BulletArenaMax.x - BulletRadius) {
+            b.position.x = BulletArenaMax.x - BulletRadius;
+            b.velocity.x =-std::abs(b.velocity.x);
+            b.bounces--;
+        }
+        if (b.position.y < BulletArenaMin.y + BulletRadius) {
+            b.position.y = BulletArenaMin.y + BulletRadius;
+            b.velocity.y = std::abs(b.velocity.y);
+            b.bounces--;
+        }
+        if (b.position.y > BulletArenaMax.y - BulletRadius) {
+            b.position.y = BulletArenaMax.y - BulletRadius;
+            b.velocity.y =-std::abs(b.velocity.y);
+            b.bounces--;
+        }
+
+        if (b.bounces < 0)
+            remove_bullets.emplace_back(&b);
+
+        for (auto &b2 : bullets) {
+            if (&b != &b2) {
+                if (glm::length2(b.position - b2.position) <= BulletRadius * BulletRadius) {
+                    remove_bullets.emplace_back(&b);
+                    remove_bullets.emplace_back(&b2);
+                }
+            }
+        }
+
+        for (auto &p : players) {
+            if (glm::length2(b.position - p.position) <= (float) pow(BulletRadius + PlayerRadius, 2.0f)) {
+                remove_bullets.emplace_back(&b);
+
+                p.score--;
+                b.player->score++;
+
+                if (b.player == &p)
+                    p.score--;
+            } else if (glm::length2(b.position - p.position) <= (float) pow(BulletRadius + PlayerGravityRadius, 2.0f)) {
+                float mul = 1.0f;
+                if (b.player == &p)
+                    mul = 0.5f;
+                b.velocity += elapsed * glm::vec2(cos(p.grav_angle), sin(p.grav_angle)) * mul;
+            }
+        }
+    }
+
+    for (Bullet* b: remove_bullets) {
+        remove_bullet(b);
+    }
+
 	for (auto &p : players) {
 		glm::vec2 dir = glm::vec2(0.0f, 0.0f);
 		if (p.controls.left.pressed) dir.x -= 1.0f;
 		if (p.controls.right.pressed) dir.x += 1.0f;
 		if (p.controls.down.pressed) dir.y -= 1.0f;
 		if (p.controls.up.pressed) dir.y += 1.0f;
+
+        if (p.controls.fire.pressed && p.bullets_left > 0 && p.cooldown <= 0.0f)
+            spawn_bullet(p);
+
+        p.cooldown -= elapsed;
+        if (p.cooldown < 0.0f)
+            p.cooldown = 0.0f;
+
+        if (p.controls.gravity_ccw.pressed)
+            p.grav_angle -= elapsed;
+
+        if (p.controls.gravity_cw.pressed)
+            p.grav_angle += elapsed;
 
 		if (dir == glm::vec2(0.0f)) {
 			//no inputs: just drift to a stop
@@ -142,13 +245,20 @@ void Game::update(float elapsed) {
 		}
 		p.position += p.velocity * elapsed;
 
+        if (glm::length(p.velocity) > 0.00001f) {
+            float direction = atan2(p.velocity.y, p.velocity.x);
+            p.angle = direction;
+        }
+
 		//reset 'downs' since controls have been handled:
 		p.controls.left.downs = 0;
 		p.controls.right.downs = 0;
 		p.controls.up.downs = 0;
 		p.controls.down.downs = 0;
-		p.controls.jump.downs = 0;
-	}
+		p.controls.fire.downs = 0;
+        p.controls.gravity_ccw.downs = 0;
+        p.controls.gravity_cw.downs = 0;
+    }
 
 	//collision resolution:
 	for (auto &p1 : players) {
@@ -184,7 +294,6 @@ void Game::update(float elapsed) {
 			p1.velocity.y =-std::abs(p1.velocity.y);
 		}
 	}
-
 }
 
 
@@ -205,13 +314,23 @@ void Game::send_state_message(Connection *connection_, Player *connection_player
 		connection.send(player.position);
 		connection.send(player.velocity);
 		connection.send(player.color);
-	
-		//NOTE: can't just 'send(name)' because player.name is not plain-old-data type.
+        connection.send(player.angle);
+        connection.send(player.grav_angle);
+        connection.send(player.score);
+
+        //NOTE: can't just 'send(name)' because player.name is not plain-old-data type.
 		//effectively: truncates player name to 255 chars
 		uint8_t len = uint8_t(std::min< size_t >(255, player.name.size()));
 		connection.send(len);
 		connection.send_buffer.insert(connection.send_buffer.end(), player.name.begin(), player.name.begin() + len);
 	};
+
+    //send bullet info helper:
+    auto send_bullet = [&](Bullet const &b) {
+        connection.send(b.position);
+        connection.send(b.velocity);
+        connection.send(b.color);
+    };
 
 	//player count:
 	connection.send(uint8_t(players.size()));
@@ -220,6 +339,11 @@ void Game::send_state_message(Connection *connection_, Player *connection_player
 		if (&player == connection_player) continue;
 		send_player(player);
 	}
+
+    connection.send(uint8_t(bullets.size()));
+    for (auto const &bullet : bullets) {
+        send_bullet(bullet);
+    }
 
 	//compute the message size and patch into the message header:
 	uint32_t size = uint32_t(connection.send_buffer.size() - mark);
@@ -252,6 +376,7 @@ bool Game::recv_state_message(Connection *connection_) {
 	};
 
 	players.clear();
+    bullets.clear();
 	uint8_t player_count;
 	read(&player_count);
 	for (uint8_t i = 0; i < player_count; ++i) {
@@ -260,7 +385,10 @@ bool Game::recv_state_message(Connection *connection_) {
 		read(&player.position);
 		read(&player.velocity);
 		read(&player.color);
-		uint8_t name_len;
+        read(&player.angle);
+        read(&player.grav_angle);
+        read(&player.score);
+        uint8_t name_len;
 		read(&name_len);
 		//n.b. would probably be more efficient to directly copy from recv_buffer, but I think this is clearer:
 		player.name = "";
@@ -270,6 +398,16 @@ bool Game::recv_state_message(Connection *connection_) {
 			player.name += c;
 		}
 	}
+
+    uint8_t bullet_count;
+    read(&bullet_count);
+    for (uint8_t i = 0; i < bullet_count; ++i) {
+        bullets.emplace_back();
+        Bullet &b = bullets.back();
+        read(&b.position);
+        read(&b.velocity);
+        read(&b.color);
+    }
 
 	if (at != size) throw std::runtime_error("Trailing data in state message.");
 
